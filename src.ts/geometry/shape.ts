@@ -1,4 +1,4 @@
-import {Vector, VectorOps, Rotation, RotationOps} from "../math";
+import {Vector, VectorOps, Rotation, RotationOps, scratchBuffer} from "../math";
 import {RawColliderSet, RawShape, RawShapeType} from "../raw";
 import {ShapeContact} from "./contact";
 import {PointProjection} from "./point";
@@ -21,7 +21,207 @@ export abstract class Shape {
         rawSet: RawColliderSet,
         handle: ColliderHandle,
     ): Shape {
-        return Shape.fromRawShape(rawSet.coShape(handle));
+        const rawType = rawSet.coShapeType(handle);
+
+        if (rawType === RawShapeType.Compound) {
+            return Compound.fromRawShape(rawSet.coShape(handle));
+        }
+
+        let borderRadius: number;
+        let vs: Float32Array;
+        let indices: Uint32Array;
+        let halfHeight: number;
+        let radius: number;
+        let normal: Vector;
+
+        switch (rawType) {
+            case RawShapeType.Ball:
+                return new Ball(rawSet.coRadius(handle));
+            case RawShapeType.Cuboid:
+                rawSet.coHalfExtents(handle, scratchBuffer);
+
+                // #if DIM2
+                return new Cuboid(scratchBuffer[0], scratchBuffer[1]);
+                // #endif
+
+                // #if DIM3
+                return new Cuboid(
+                    scratchBuffer[0],
+                    scratchBuffer[1],
+                    scratchBuffer[2],
+                );
+            // #endif
+
+            case RawShapeType.RoundCuboid:
+                borderRadius = rawSet.coRoundRadius(handle);
+                rawSet.coHalfExtents(handle, scratchBuffer);
+
+                // #if DIM2
+                return new RoundCuboid(
+                    scratchBuffer[0],
+                    scratchBuffer[1],
+                    borderRadius,
+                );
+                // #endif
+
+                // #if DIM3
+                return new RoundCuboid(
+                    scratchBuffer[0],
+                    scratchBuffer[1],
+                    scratchBuffer[2],
+                    borderRadius,
+                );
+            // #endif
+
+            case RawShapeType.Capsule:
+                halfHeight = rawSet.coHalfHeight(handle);
+                radius = rawSet.coRadius(handle);
+                return new Capsule(halfHeight, radius);
+            case RawShapeType.Segment:
+                vs = rawSet.coVertices(handle);
+
+                // #if DIM2
+                return new Segment(
+                    VectorOps.new(vs[0], vs[1]),
+                    VectorOps.new(vs[2], vs[3]),
+                );
+                // #endif
+
+                // #if DIM3
+                return new Segment(
+                    VectorOps.new(vs[0], vs[1], vs[2]),
+                    VectorOps.new(vs[3], vs[4], vs[5]),
+                );
+            // #endif
+
+            case RawShapeType.Polyline:
+                vs = rawSet.coVertices(handle);
+                indices = rawSet.coIndices(handle);
+                return new Polyline(vs, indices);
+            case RawShapeType.Triangle:
+                vs = rawSet.coVertices(handle);
+
+                // #if DIM2
+                return new Triangle(
+                    VectorOps.new(vs[0], vs[1]),
+                    VectorOps.new(vs[2], vs[3]),
+                    VectorOps.new(vs[4], vs[5]),
+                );
+                // #endif
+
+                // #if DIM3
+                return new Triangle(
+                    VectorOps.new(vs[0], vs[1], vs[2]),
+                    VectorOps.new(vs[3], vs[4], vs[5]),
+                    VectorOps.new(vs[6], vs[7], vs[8]),
+                );
+            // #endif
+
+            case RawShapeType.RoundTriangle:
+                vs = rawSet.coVertices(handle);
+                borderRadius = rawSet.coRoundRadius(handle);
+
+                // #if DIM2
+                return new RoundTriangle(
+                    VectorOps.new(vs[0], vs[1]),
+                    VectorOps.new(vs[2], vs[3]),
+                    VectorOps.new(vs[4], vs[5]),
+                    borderRadius,
+                );
+                // #endif
+
+                // #if DIM3
+                return new RoundTriangle(
+                    VectorOps.new(vs[0], vs[1], vs[2]),
+                    VectorOps.new(vs[3], vs[4], vs[5]),
+                    VectorOps.new(vs[6], vs[7], vs[8]),
+                    borderRadius,
+                );
+            // #endif
+
+            case RawShapeType.HalfSpace:
+                rawSet.coHalfspaceNormal(handle, scratchBuffer);
+                normal = VectorOps.fromBuffer(scratchBuffer);
+                return new HalfSpace(normal);
+
+            case RawShapeType.Voxels:
+                const vox_data = rawSet.coVoxelData(handle);
+                const vox_size = rawSet.coVoxelSize(handle);
+                return new Voxels(vox_data, vox_size);
+
+            case RawShapeType.TriMesh:
+                vs = rawSet.coVertices(handle);
+                indices = rawSet.coIndices(handle);
+                const tri_flags = rawSet.coTriMeshFlags(handle);
+                return new TriMesh(vs, indices, tri_flags);
+
+            case RawShapeType.HeightField:
+                const heights = rawSet.coHeightfieldHeights(handle);
+                rawSet.coHeightfieldScale(handle, scratchBuffer);
+
+                // #if DIM2
+                const scale = {
+                    x: scratchBuffer[0],
+                    y: scratchBuffer[1],
+                };
+                return new Heightfield(heights, scale);
+                // #endif
+
+                // #if DIM3
+                const scale = {
+                    x: scratchBuffer[0],
+                    y: scratchBuffer[1],
+                    z: scratchBuffer[2],
+                };
+                const nrows = rawSet.coHeightfieldNRows(handle);
+                const ncols = rawSet.coHeightfieldNCols(handle);
+                const hf_flags = rawSet.coHeightFieldFlags(handle);
+                return new Heightfield(nrows, ncols, heights, scale, hf_flags);
+            // #endif
+
+            // #if DIM2
+            case RawShapeType.ConvexPolygon:
+                vs = rawSet.coVertices(handle);
+                return new ConvexPolygon(vs, false);
+            case RawShapeType.RoundConvexPolygon:
+                vs = rawSet.coVertices(handle);
+                borderRadius = rawSet.coRoundRadius(handle);
+                return new RoundConvexPolygon(vs, borderRadius, false);
+            // #endif
+
+            // #if DIM3
+            case RawShapeType.ConvexPolyhedron:
+                vs = rawSet.coVertices(handle);
+                indices = rawSet.coIndices(handle);
+                return new ConvexPolyhedron(vs, indices);
+            case RawShapeType.RoundConvexPolyhedron:
+                vs = rawSet.coVertices(handle);
+                indices = rawSet.coIndices(handle);
+                borderRadius = rawSet.coRoundRadius(handle);
+                return new RoundConvexPolyhedron(vs, indices, borderRadius);
+            case RawShapeType.Cylinder:
+                halfHeight = rawSet.coHalfHeight(handle);
+                radius = rawSet.coRadius(handle);
+                return new Cylinder(halfHeight, radius);
+            case RawShapeType.RoundCylinder:
+                halfHeight = rawSet.coHalfHeight(handle);
+                radius = rawSet.coRadius(handle);
+                borderRadius = rawSet.coRoundRadius(handle);
+                return new RoundCylinder(halfHeight, radius, borderRadius);
+            case RawShapeType.Cone:
+                halfHeight = rawSet.coHalfHeight(handle);
+                radius = rawSet.coRadius(handle);
+                return new Cone(halfHeight, radius);
+            case RawShapeType.RoundCone:
+                halfHeight = rawSet.coHalfHeight(handle);
+                radius = rawSet.coRadius(handle);
+                borderRadius = rawSet.coRoundRadius(handle);
+                return new RoundCone(halfHeight, radius, borderRadius);
+            // #endif
+
+            default:
+                throw new Error("unknown shape type: " + rawType);
+        }
     }
 
     public static fromRawShape(rawShape: RawShape): Shape {
@@ -225,7 +425,7 @@ export abstract class Shape {
 
     /**
      * Computes the time of impact between two moving shapes.
-     * @param shapePos1 - The initial position of this sahpe.
+     * @param shapePos1 - The initial position of this shape.
      * @param shapeRot1 - The rotation of this shape.
      * @param shapeVel1 - The velocity of this shape.
      * @param shape2 - The second moving shape.
@@ -238,9 +438,11 @@ export abstract class Shape {
      * @param stopAtPenetration - If set to `false`, the linear shape-cast won’t immediately stop if
      *   the shape is penetrating another shape at its starting point **and** its trajectory is such
      *   that it’s on a path to exit that penetration state.
+     * @param {ShapeCastHit?} target - The object to be populated. If provided,
+     * the function returns this object instead of creating a new one.
      * @returns If the two moving shapes collider at some point along their trajectories, this returns the
      *  time at which the two shape collider as well as the contact information during the impact. Returns
-     *  `null`if the two shapes never collide along their paths.
+     *  `null` if the two shapes never collide along their paths.
      */
     public castShape(
         shapePos1: Vector,
@@ -253,6 +455,7 @@ export abstract class Shape {
         targetDistance: number,
         maxToi: number,
         stopAtPenetration: boolean,
+        target?: ShapeCastHit,
     ): ShapeCastHit | null {
         let rawPos1 = VectorOps.intoRaw(shapePos1);
         let rawRot1 = RotationOps.intoRaw(shapeRot1);
@@ -264,21 +467,25 @@ export abstract class Shape {
         let rawShape1 = this.intoRaw();
         let rawShape2 = shape2.intoRaw();
 
-        let result = ShapeCastHit.fromRaw(
-            null,
-            rawShape1.castShape(
-                rawPos1,
-                rawRot1,
-                rawVel1,
-                rawShape2,
-                rawPos2,
-                rawRot2,
-                rawVel2,
-                targetDistance,
-                maxToi,
-                stopAtPenetration,
-            ),
+        const rawShapeCastHit = rawShape1.castShape(
+            rawPos1,
+            rawRot1,
+            rawVel1,
+            rawShape2,
+            rawPos2,
+            rawRot2,
+            rawVel2,
+            targetDistance,
+            maxToi,
+            stopAtPenetration,
         );
+
+        let result = null;
+        if (rawShapeCastHit) {
+            rawShapeCastHit.getComponents(scratchBuffer);
+            result = ShapeCastHit.fromBuffer(null, scratchBuffer, target);
+            rawShapeCastHit.free();
+        }
 
         rawPos1.free();
         rawRot1.free();
@@ -355,6 +562,7 @@ export abstract class Shape {
         shapePos2: Vector,
         shapeRot2: Rotation,
         prediction: number,
+        target?: ShapeContact,
     ): ShapeContact | null {
         let rawPos1 = VectorOps.intoRaw(shapePos1);
         let rawRot1 = RotationOps.intoRaw(shapeRot1);
@@ -364,7 +572,7 @@ export abstract class Shape {
         let rawShape1 = this.intoRaw();
         let rawShape2 = shape2.intoRaw();
 
-        let result = ShapeContact.fromRaw(
+        let result = ShapeContact.fromBuffer(
             rawShape1.contactShape(
                 rawPos1,
                 rawRot1,
@@ -373,6 +581,7 @@ export abstract class Shape {
                 rawRot2,
                 prediction,
             ),
+            target,
         );
 
         rawPos1.free();
@@ -411,14 +620,16 @@ export abstract class Shape {
         shapeRot: Rotation,
         point: Vector,
         solid: boolean,
+        target?: PointProjection,
     ): PointProjection {
         let rawPos = VectorOps.intoRaw(shapePos);
         let rawRot = RotationOps.intoRaw(shapeRot);
         let rawPoint = VectorOps.intoRaw(point);
         let rawShape = this.intoRaw();
 
-        let result = PointProjection.fromRaw(
+        let result = PointProjection.fromBuffer(
             rawShape.projectPoint(rawPos, rawRot, rawPoint, solid),
+            target,
         );
 
         rawPos.free();
@@ -495,6 +706,7 @@ export abstract class Shape {
         shapeRot: Rotation,
         maxToi: number,
         solid: boolean,
+        target?: RayIntersection,
     ): RayIntersection {
         let rawPos = VectorOps.intoRaw(shapePos);
         let rawRot = RotationOps.intoRaw(shapeRot);
@@ -502,7 +714,7 @@ export abstract class Shape {
         let rawRayDir = VectorOps.intoRaw(ray.dir);
         let rawShape = this.intoRaw();
 
-        let result = RayIntersection.fromRaw(
+        let result = RayIntersection.fromBuffer(
             rawShape.castRayAndGetNormal(
                 rawPos,
                 rawRot,
@@ -511,6 +723,7 @@ export abstract class Shape {
                 maxToi,
                 solid,
             ),
+            target,
         );
 
         rawPos.free();
