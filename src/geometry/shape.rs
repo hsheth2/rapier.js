@@ -9,7 +9,7 @@ use rapier::geometry::{Shape, SharedShape, TriMeshFlags};
 use rapier::math::{Isometry, Point, Real, Vector, DIM};
 use rapier::parry::query;
 use rapier::parry::query::{Ray, ShapeCastOptions};
-use rapier::parry::transformation::vhacd::VHACDParameters;
+use rapier::parry::transformation::vhacd::{VHACDParameters, VHACD};
 use wasm_bindgen::prelude::*;
 
 pub trait SharedShapeUtility {
@@ -323,6 +323,14 @@ impl RawVHACDParameters {
     }
 }
 
+/// The vertex/index buffers of a convex polyhedron’s convex hull.
+#[cfg(feature = "dim3")]
+#[wasm_bindgen(getter_with_clone)]
+pub struct RawConvexMeshData {
+    pub vertices: Vec<f32>,
+    pub indices: Vec<u32>,
+}
+
 #[wasm_bindgen]
 pub struct RawShape(pub(crate) SharedShape);
 
@@ -481,6 +489,13 @@ impl RawShape {
             .map(|voxels| RawVector(voxels.voxel_size()))
     }
 
+    /// The vertices of this shape, if it is vertex-based.
+    ///
+    /// For convex polyhedra, this returns the vertices of a convex hull recomputed with
+    /// `try_convex_hull` (so they may differ in count and order from the points the shape
+    /// was built from), ensuring the result can be fed back to `RawShape::convexMesh`.
+    /// If both `vertices` and `indices` are needed, prefer `convexMeshData` which computes
+    /// the convex hull only once.
     pub fn vertices(&self) -> Option<Vec<f32>> {
         let flatten = |vertices: &[Point<f32>]| {
             vertices
@@ -573,6 +588,33 @@ impl RawShape {
                 .map(|(_, indices)| indices),
             _ => None,
         }
+    }
+
+    /// The vertices and indices of the convex hull of this convex polyhedron, recomputed
+    /// with `try_convex_hull` so that the result can always be fed back to
+    /// `RawShape::convexMesh`.
+    ///
+    /// This computes the convex hull only once, unlike calling both `vertices()` and
+    /// `indices()`.
+    #[cfg(feature = "dim3")]
+    pub fn convexMeshData(&self) -> Option<RawConvexMeshData> {
+        let polyhedron = match self.0.shape_type() {
+            rapier::geometry::ShapeType::ConvexPolyhedron => self.0.as_convex_polyhedron(),
+            rapier::geometry::ShapeType::RoundConvexPolyhedron => self
+                .0
+                .as_round_convex_polyhedron()
+                .map(|polyhedron| &polyhedron.inner_shape),
+            _ => None,
+        }?;
+        let (points, indices) = normalized_convex_polyhedron_mesh(polyhedron)?;
+        Some(RawConvexMeshData {
+            vertices: points
+                .iter()
+                .flat_map(|point| point.iter())
+                .copied()
+                .collect(),
+            indices,
+        })
     }
 
     pub fn triMeshFlags(&self) -> Option<u32> {
@@ -831,6 +873,24 @@ impl RawShape {
         let mut compound_parts = Vec::new();
         let num_shapes = shapes.len();
 
+        assert_eq!(
+            positions.len(),
+            num_shapes * DIM,
+            "The compound positions array must contain DIM entries per shape."
+        );
+        #[cfg(feature = "dim2")]
+        assert_eq!(
+            rotations.len(),
+            num_shapes,
+            "The compound rotations array must contain one angle per shape."
+        );
+        #[cfg(feature = "dim3")]
+        assert_eq!(
+            rotations.len(),
+            num_shapes * 4,
+            "The compound rotations array must contain one quaternion (4 entries) per shape."
+        );
+
         for i in 0..num_shapes {
             let pos_offset = i * DIM;
 
@@ -867,15 +927,7 @@ impl RawShape {
     }
 
     pub fn convexDecomposition(vertices: Vec<f32>, indices: Vec<u32>) -> Option<RawShape> {
-        let vertices: Vec<_> = vertices.chunks(DIM).map(|v| Point::from_slice(v)).collect();
-        #[cfg(feature = "dim2")]
-        let indices: Vec<_> = indices.chunks(2).map(|v| [v[0], v[1]]).collect();
-        #[cfg(feature = "dim3")]
-        let indices: Vec<_> = indices.chunks(3).map(|v| [v[0], v[1], v[2]]).collect();
-
-        let shape =
-            SharedShape::convex_decomposition_with_params(&vertices, &indices, &Default::default());
-        Some(Self(shape))
+        Self::convexDecompositionWithParams(vertices, indices, &RawVHACDParameters::new())
     }
 
     pub fn convexDecompositionWithParams(
@@ -889,8 +941,32 @@ impl RawShape {
         #[cfg(feature = "dim3")]
         let indices: Vec<_> = indices.chunks(3).map(|v| [v[0], v[1], v[2]]).collect();
 
-        let shape = SharedShape::convex_decomposition_with_params(&vertices, &indices, &params.0);
-        Some(Self(shape))
+        // Same as `SharedShape::convex_decomposition_with_params`, except that a
+        // decomposition yielding no convex part returns `None` instead of panicking
+        // when building the empty compound.
+        let decomp = VHACD::decompose(&params.0, &vertices, &indices, true);
+        let mut parts = vec![];
+
+        #[cfg(feature = "dim2")]
+        for hull_vertices in decomp.compute_exact_convex_hulls(&vertices, &indices) {
+            if let Some(convex) = SharedShape::convex_polyline(hull_vertices) {
+                parts.push((Isometry::identity(), convex));
+            }
+        }
+
+        #[cfg(feature = "dim3")]
+        for (hull_vertices, hull_indices) in decomp.compute_exact_convex_hulls(&vertices, &indices)
+        {
+            if let Some(convex) = SharedShape::convex_mesh(hull_vertices, &hull_indices) {
+                parts.push((Isometry::identity(), convex));
+            }
+        }
+
+        if parts.is_empty() {
+            return None;
+        }
+
+        Some(Self(SharedShape::compound(parts)))
     }
 
     pub fn castShape(
@@ -1021,6 +1097,14 @@ impl RawShape {
 #[cfg(all(test, feature = "dim3"))]
 mod tests {
     use super::RawShape;
+
+    #[test]
+    fn convex_decomposition_of_degenerate_mesh_returns_none() {
+        // A single zero-area triangle can’t produce any convex part.
+        let vertices = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 2.0, 0.0, 0.0];
+        let indices = vec![0, 1, 2];
+        assert!(RawShape::convexDecomposition(vertices, indices).is_none());
+    }
 
     #[test]
     fn raw_convex_mesh_accessors_round_trip_with_collinear_boundary_vertex() {

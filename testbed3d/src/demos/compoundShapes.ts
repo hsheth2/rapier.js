@@ -1,9 +1,10 @@
 import type {Testbed} from "../Testbed";
+import type {ColliderDesc} from "@dimforge/rapier3d";
 import seedrandom from "seedrandom";
 
 type RAPIER_API = typeof import("@dimforge/rapier3d");
 
-function createLShape(RAPIER: RAPIER_API): any {
+function createLShape(RAPIER: RAPIER_API): ColliderDesc {
     const shape1 = new RAPIER.Cuboid(2.0, 0.5, 0.5);
     const shape2 = new RAPIER.Cuboid(0.5, 1.5, 0.5);
 
@@ -20,7 +21,7 @@ function createLShape(RAPIER: RAPIER_API): any {
     return RAPIER.ColliderDesc.compound(shapes, positions, rotations);
 }
 
-function createTShape(RAPIER: RAPIER_API): any {
+function createTShape(RAPIER: RAPIER_API): ColliderDesc {
     const shape1 = new RAPIER.Cuboid(2.0, 0.5, 0.5);
     const shape2 = new RAPIER.Cuboid(0.5, 1.5, 0.5);
 
@@ -37,7 +38,7 @@ function createTShape(RAPIER: RAPIER_API): any {
     return RAPIER.ColliderDesc.compound(shapes, positions, rotations);
 }
 
-function createPlusShape(RAPIER: RAPIER_API): any {
+function createPlusShape(RAPIER: RAPIER_API): ColliderDesc {
     const shape1 = new RAPIER.Cuboid(2.0, 0.5, 0.5);
     const shape2 = new RAPIER.Cuboid(0.5, 2.0, 0.5);
 
@@ -54,7 +55,7 @@ function createPlusShape(RAPIER: RAPIER_API): any {
     return RAPIER.ColliderDesc.compound(shapes, positions, rotations);
 }
 
-function createStairsShape(RAPIER: RAPIER_API): any {
+function createStairsShape(RAPIER: RAPIER_API): ColliderDesc {
     const step = new RAPIER.Cuboid(0.8, 0.4, 0.5);
 
     const shapes = [step, step, step];
@@ -73,7 +74,7 @@ function createStairsShape(RAPIER: RAPIER_API): any {
     return RAPIER.ColliderDesc.compound(shapes, positions, rotations);
 }
 
-function createDumbbellShape(RAPIER: RAPIER_API): any {
+function createDumbbellShape(RAPIER: RAPIER_API): ColliderDesc {
     const shape1 = new RAPIER.Ball(0.8); // left weight
     const shape2 = new RAPIER.Cuboid(1.5, 0.2, 0.2); // bar
     const shape3 = new RAPIER.Ball(0.8); // right weight

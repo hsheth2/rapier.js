@@ -679,6 +679,10 @@ impl RawColliderSet {
     }
 
     /// The vertices of this triangle mesh, polyline, convex polyhedron, segment, triangle or convex polyhedron, if it is one.
+    ///
+    /// For convex polyhedra, this returns the vertices of a convex hull recomputed with
+    /// `try_convex_hull`, so they may differ in count and order from the points the shape
+    /// was built from. This guarantees the result can be used to reconstruct the shape.
     pub fn coVertices(&self, handle: FlatHandle) -> Option<Vec<f32>> {
         let flatten =
             |vertices: &[Point<f32>]| vertices.iter().flat_map(|p| p.iter()).copied().collect();
@@ -716,6 +720,9 @@ impl RawColliderSet {
     }
 
     /// The indices of this triangle mesh, polyline, or convex polyhedron, if it is one.
+    ///
+    /// For convex polyhedra, the indices refer to the convex hull recomputed with
+    /// `try_convex_hull` (matching `coVertices`), not to the original input mesh.
     pub fn coIndices(&self, handle: FlatHandle) -> Option<Vec<u32>> {
         self.map(handle, |co| match co.shape().shape_type() {
             ShapeType::TriMesh => co

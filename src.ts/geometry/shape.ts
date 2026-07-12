@@ -382,15 +382,31 @@ export abstract class Shape {
                 // #endif
 
                 // #if DIM3
-                case RawShapeType.ConvexPolyhedron:
-                    vs = rawShape.vertices();
-                    indices = rawShape.indices();
+                case RawShapeType.ConvexPolyhedron: {
+                    const mesh = rawShape.convexMeshData();
+                    if (!mesh) {
+                        throw new Error(
+                            "Failed to compute the convex hull of a convex polyhedron shape.",
+                        );
+                    }
+                    vs = mesh.vertices;
+                    indices = mesh.indices;
+                    mesh.free();
                     return new ConvexPolyhedron(vs, indices);
-                case RawShapeType.RoundConvexPolyhedron:
-                    vs = rawShape.vertices();
-                    indices = rawShape.indices();
+                }
+                case RawShapeType.RoundConvexPolyhedron: {
+                    const mesh = rawShape.convexMeshData();
+                    if (!mesh) {
+                        throw new Error(
+                            "Failed to compute the convex hull of a convex polyhedron shape.",
+                        );
+                    }
+                    vs = mesh.vertices;
+                    indices = mesh.indices;
+                    mesh.free();
                     borderRadius = rawShape.roundRadius();
                     return new RoundConvexPolyhedron(vs, indices, borderRadius);
+                }
                 case RawShapeType.Cylinder:
                     halfHeight = rawShape.halfHeight();
                     radius = rawShape.radius();
@@ -1323,7 +1339,9 @@ export class Compound extends Shape {
     /**
      * Creates a new compound shape.
      *
-     * @param shapes - The array of shapes composing this compound.
+     * @param shapes - The array of shapes composing this compound. Must not be empty,
+     *                 and must not contain other compound shapes (nested compound shapes
+     *                 are not allowed).
      * @param positions - The array of positions for each shape.
      * @param rotations - The array of rotations for each shape.
      */
@@ -1339,6 +1357,14 @@ export class Compound extends Shape {
             );
         }
 
+        if (shapes.length === 0) {
+            throw new Error("a compound shape must contain at least one shape");
+        }
+
+        if (shapes.some((shape) => shape.type === ShapeType.Compound)) {
+            throw new Error("nested compound shapes are not allowed");
+        }
+
         this.shapes = shapes;
         this.positions = positions;
         this.rotations = rotations;
@@ -1350,12 +1376,12 @@ export class Compound extends Shape {
      * This takes ownership of `rawShape` and always frees it before returning.
      */
     public static fromRawShape(rawShape: RawShape): Compound {
-        const numShapes = rawShape.compoundLen();
-        if (numShapes == null) {
-            throw new Error("Expected a raw compound shape.");
-        }
-
         try {
+            const numShapes = rawShape.compoundLen();
+            if (numShapes == null) {
+                throw new Error("Expected a raw compound shape.");
+            }
+
             const shapes = new Array<Shape>(numShapes);
             const positions = new Array<Vector>(numShapes);
             const rotations = new Array<Rotation>(numShapes);

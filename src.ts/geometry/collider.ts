@@ -1830,7 +1830,9 @@ export class ColliderDesc {
     /**
      * Creates a new collider descriptor with a compound shape.
      *
-     * @param shapes - The array of shapes composing this compound.
+     * @param shapes - The array of shapes composing this compound. Must not be empty, and
+     *                 must not contain other compound shapes (nested compound shapes are
+     *                 not allowed).
      * @param positions - The array of positions for each shape (relative to the compound's origin).
      * @param rotations - The array of rotations for each shape (relative to the compound's orientation).
      */
@@ -1845,11 +1847,13 @@ export class ColliderDesc {
 
     /**
      * Creates a new collider descriptor with a compound shape automatically created
-     * from a convex decomposition of the given triangle mesh.
+     * from a convex decomposition of the given triangle mesh (in 3D) or polyline (in 2D).
      *
      * @param vertices - The coordinates of the mesh's vertices.
-     * @param indices - The indices of the mesh's triangles.
+     * @param indices - The indices of the mesh's triangles (in 3D) or segments (in 2D).
      * @param params - Optional VHACD parameters to control the decomposition.
+     * @returns The collider descriptor, or `null` if the decomposition did not produce
+     *          any convex part (e.g. if the input mesh is degenerate).
      */
     public static convexDecomposition(
         vertices: Float32Array,
@@ -1883,6 +1887,7 @@ export class ColliderDesc {
                 indices,
                 rawParams,
             );
+            rawParams.free();
         } else {
             rawShape = RawShape.convexDecomposition(vertices, indices);
         }
